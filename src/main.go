@@ -1,53 +1,25 @@
 package main
 
 import (
+	// "./pkg/RedisClient"
+	"./pkg/Requester"
 	"fmt"
-	"log"
-	"net/http"
-	"time"
-
-	"./pkg/RedisClient"
-	"github.com/PuerkitoBio/goquery"
 )
 
 func main() {
-	redis := RedisClient.CreateNewClient()
-
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	// redis := RedisClient.CreateNewClient()
+	req := Requester.Requester{
+		StartUrl: "https://github.com/angular/angular",
 	}
+	external, internal := req.Check()
 
-	// Create and modify HTTP request before sending
-	request, err := http.NewRequest("GET", "https://www.devdungeon.com", nil)
-	if err != nil {
-		log.Fatal(err)
+	fmt.Println("External")
+	for _, element := range external {
+		fmt.Println(element)
 	}
-	request.Header.Set("User-Agent", "Not Firefox")
-
-	// Make request
-	response, err := client.Do(request)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer response.Body.Close()
-
-	// Create a goquery document from the HTTP response
-	document, err := goquery.NewDocumentFromReader(response.Body)
-	if err != nil {
-		log.Fatal("Error loading HTTP response body. ", err)
-	}
-
-	// Find all links and process them with the function
-	// defined earlier
-	document.Find("a").Each(processElement)
-}
-
-// This will get called for each HTML element found
-func processElement(index int, element *goquery.Selection) {
-	// See if the href attribute exists on the element
-	href, exists := element.Attr("href")
-	if exists {
-		fmt.Println(href)
+	fmt.Println()
+	fmt.Println("Internal")
+	for _, element := range internal {
+		fmt.Println(element)
 	}
 }

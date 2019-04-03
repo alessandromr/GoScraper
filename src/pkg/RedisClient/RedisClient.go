@@ -2,7 +2,6 @@ package RedisClient
 
 import (
 	"crypto/tls"
-
 	"github.com/go-redis/redis"
 )
 
