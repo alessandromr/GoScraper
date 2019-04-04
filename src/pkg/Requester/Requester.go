@@ -28,7 +28,7 @@ func (req Requester) Check() ([]string, []string) {
 	links := linkSystem.Clean(req.getLinks(document))
 
 	external, internal = linkSystem.DivideByType(links, linkSystem.GetDomainUrl(req.StartUrl))
-	external, _ = linkSystem.IsSubdomain(external)
+	// external, _ = linkSystem.IsSubdomain(external)
 
 	return external, internal
 }

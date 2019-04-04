@@ -37,12 +37,14 @@ func main() {
 		Port:      8080,
 	}
 	queue := mq.ConfigNew("scraper", settings)
-	queue.Clear()
+	// queue.Clear()
 	// redis.FlushDB()
 
-	var next string = "https://reddit.com"
+	var next string = "https://www.reddit.com/r/EpicSeven/comments/adbngw/compilation_of_useful_links/"
 	var cond bool = true
 	for cond {
+		info, _ := queue.Info()
+		log.Println("Waiting: ", info.Size)
 		req := Requester.Requester{
 			StartUrl: next,
 		}
@@ -93,7 +95,7 @@ func registerToQueue(external []string, client *redis.Client, queue mq.Queue) {
 }
 
 func registerToMysql(external []string, db *sql.DB) {
-	stmtIns, err := db.Prepare("INSERT INTO sites (url) VALUES( ? )")
+	stmtIns, err := db.Prepare("INSERT IGNORE INTO sites (url) VALUES( ? )")
 	if err != nil {
 		panic(err.Error())
 	}
