@@ -1,0 +1,10 @@
+https://dev.iron.io/mq/3/on-premise/installation/single.html
+
+
+```shell
+    docker run --net=host iron/authcli iron -t adminToken create user alessandromarinoac@gmail.com scraper
+```
+
+```shell
+    docker run --net=host iron/authcli iron -t $USER_TOKEN create project scraper
+```

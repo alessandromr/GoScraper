@@ -39,12 +39,20 @@ services:
            - "8080:8080"
         expose:
            - 8080
+        volumes:
+           - ironData:/ironmq/data
+        links:
+         - "ironauth:ironauth"
+        environment:
+         - "AUTH_HOST=http://ironauth:8090"
     ####################################################################################################
     # IronMQAuth
     ####################################################################################################
-    iron:
+    ironauth:
         container_name: Scraper_IronMQAuth
         image: iron/auth:latest
+      #   volumes:
+      #      - ironData:/ironmq/data
         ports:
            - "8090:8090"
         expose:
@@ -67,3 +75,4 @@ services:
 volumes:
   mysqlData:
   redisData:
+  ironData:
