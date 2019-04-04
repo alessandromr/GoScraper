@@ -3,13 +3,13 @@ package main
 import (
 	"./pkg/RedisClient"
 	"./pkg/Requester"
-	"github.com/joho/godotenv"
-	// "database/sql"
+	"database/sql"
 	"fmt"
 	"github.com/go-redis/redis"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/iron-io/iron_go3/config"
 	"github.com/iron-io/iron_go3/mq"
+	"github.com/joho/godotenv"
 	"log"
 	"os"
 	"time"
@@ -20,7 +20,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// db, err := sql.Open("mysql", "scraper:root@/scraper")
+	db, err := sql.Open("mysql", "scraper:root@/scraper")
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = db.Ping()
+	if err != nil {
+		log.Fatal(err)
+	}
 	redis := RedisClient.CreateNewClient()
 	settings := &config.Settings{
 		Token:     os.Getenv("IRON_TOKEN"),
@@ -30,8 +37,10 @@ func main() {
 		Port:      8080,
 	}
 	queue := mq.ConfigNew("scraper", settings)
+	queue.Clear()
+	redis.FlushDB()
 
-	var next string = "https://golangcode.com/sleeping-with-go/"
+	var next string = "https://github.com"
 	var cond bool = true
 	for cond {
 		req := Requester.Requester{
@@ -40,17 +49,21 @@ func main() {
 		//Make Request and Get Links
 		external, _ := req.Check()
 		print(req)
-		registerToQueue(external, redis, queue) //First
-		registerToRedis(external, redis)        //After
+		registerToRedis(external, redis)        //One
+		registerToQueue(external, redis, queue) //Two
+		registerToMysql(external, db)           //Three
 
-		next = getNext(queue)
+		next = getNext(req.StartUrl, redis, queue)
+		if next == "" {
+			cond = false
+		}
 		time.Sleep(4 * time.Second)
 	}
 }
 
 func registerToRedis(external []string, client *redis.Client) {
 	for _, element := range external {
-		err := client.SetNX(element, 0, 0).Err()
+		err := client.SetNX(element, "0", 0).Err()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -59,26 +72,48 @@ func registerToRedis(external []string, client *redis.Client) {
 
 func registerToQueue(external []string, client *redis.Client, queue mq.Queue) {
 	for _, element := range external {
-		_, err := client.Get(element).Result()
-		if err == redis.Nil {
+		val, err := client.Get(element).Result()
+		if err != nil {
+			panic(err)
+		} else if err == redis.Nil {
+			continue
+		}
+		if val == "0" {
 			_, err := queue.PushMessage(mq.Message{Delay: 0, Body: element})
 			if err != nil {
 				log.Fatal(err)
 			}
-		} else if err != nil {
-			panic(err)
 		}
 	}
 	return
 }
 
-// func registerToMysql() {
+func registerToMysql(external []string, db *sql.DB) {
+	stmtIns, err := db.Prepare("INSERT INTO sites (url) VALUES( ? )")
+	if err != nil {
+		panic(err.Error())
+	}
+	defer stmtIns.Close()
 
-// }
+	for _, element := range external {
+		_, err = stmtIns.Exec(element)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 
-func getNext(queue mq.Queue) string {
-	message, _ := queue.PeekN(1)
-	return message[0].Body
+}
+
+func getNext(current string, client *redis.Client, queue mq.Queue) string {
+	err := client.Set(current, "1", 0).Err()
+	if err != nil {
+		log.Fatal(err)
+	}
+	message, _ := queue.Pop()
+	if message.Body == "" {
+		return ""
+	}
+	return message.Body
 }
 
 func print(req Requester.Requester) {
