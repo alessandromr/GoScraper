@@ -1,10 +1,10 @@
 package Requester
 
 import (
+	"../LinkSystem"
 	"github.com/PuerkitoBio/goquery"
 	"log"
 	"net/http"
-	"regexp"
 	"time"
 )
 
@@ -19,13 +19,18 @@ type Requester struct {
 * @parameter null
 * @return []string, []string
  */
-func (r Requester) Check() ([]string, []string) {
-	r.getDomainUrl()
+func (req Requester) Check() ([]string, []string) {
+	linkSystem := LinkSystem.LinkSystem{}
+	var external []string
+	var internal []string
 
-	document := r.makeCheck()
-	links := r.getLinks(document)
+	document := req.makeCheck()
+	links := linkSystem.Clean(req.getLinks(document))
 
-	return r.checkLinkType(links)
+	external, internal = linkSystem.DivideByType(links, linkSystem.GetDomainUrl(req.StartUrl))
+	external, _ = linkSystem.IsSubdomain(external)
+
+	return external, internal
 }
 
 /**
@@ -74,40 +79,4 @@ func (r Requester) getLinks(d goquery.Document) []string {
 		}
 	})
 	return links
-}
-
-/**
-* Get DomainUrl from given start url
-* @parameter
-* @return
- */
-func (r *Requester) getDomainUrl() {
-	regex, _ := regexp.Compile("(http(s)?:\\/\\/)([\\w.-]+)(\\.[\\w\\.-]+)")
-	found := regex.FindStringSubmatch(r.StartUrl)
-	r.domainUrl = found[3] + found[4]
-}
-
-/**
-* Check link type
-* @parameter []string
-* @return
- */
-func (r Requester) checkLinkType(links []string) ([]string, []string) {
-	var external []string
-	var internal []string
-	isValid, _ := regexp.Compile("(http(s)?:\\/\\/)([\\w.-]+)(\\.[\\w\\.-]+)+(\\/)?([\\w\\-\\._~:\\/?#[\\]@!\\$&'\\(\\)\\*\\+,;=.]+)$")
-	isInternal, _ := regexp.Compile("(http(s)?:\\/\\/)" + r.domainUrl + "(.*)")
-
-	for _, element := range links {
-		//If String is valid url
-		//Anchor are excluded
-		if isValid.MatchString(element) {
-			if isInternal.MatchString(element) {
-				internal = append(internal, element)
-			} else {
-				external = append(external, element)
-			}
-		}
-	}
-	return external, internal
 }
