@@ -38,16 +38,16 @@ func main() {
 	}
 	queue := mq.ConfigNew("scraper", settings)
 	queue.Clear()
-	redis.FlushDB()
+	// redis.FlushDB()
 
-	var next string = "https://github.com"
+	var next string = "https://reddit.com"
 	var cond bool = true
 	for cond {
 		req := Requester.Requester{
 			StartUrl: next,
 		}
 		//Make Request and Get Links
-		external, _ := req.Check()
+		external, internal := req.Check()
 		print(req)
 		registerToRedis(external, redis)        //One
 		registerToQueue(external, redis, queue) //Two
@@ -55,7 +55,11 @@ func main() {
 
 		next = getNext(req.StartUrl, redis, queue)
 		if next == "" {
-			cond = false
+			if len(internal) > 1 {
+				next = internal[0]
+			} else {
+				cond = false
+			}
 		}
 		time.Sleep(4 * time.Second)
 	}
