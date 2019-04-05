@@ -1,8 +1,10 @@
 package main
 
 import (
-	"./pkg/RedisClient"
-	"./pkg/Requester"
+	"./pkg/DbManager"
+	"./pkg/DomManager"
+	"./pkg/HttpRequester"
+	"./pkg/LinkManager"
 	"database/sql"
 	"fmt"
 	"github.com/go-redis/redis"
@@ -16,19 +18,90 @@ import (
 )
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal(err)
+	loadEnv()
+	next := "https://www.reddit.com/r/EpicSeven/comments/adbngw/compilation_of_useful_links/"
+	var dbManager = DbManager.DbManager{
+		RedisClient: getRedisClient(),
+		MySqlClient: getMysqlClient(),
+		QueueClient: getQueueClient(),
 	}
+	// getQueueClient().Clear()
+	// getRedisClient().FlushDB()
+
+	cond := true
+	for cond {
+		/*Preparation*/
+		log.Println("Current Queue: ", dbManager.GetQueueSize())
+		if dbManager.GetQueueSize() > 1 {
+			next = dbManager.GetNextURLFromQueue(next) //Right Now "next" is the current url and we pass it to GetNext to mark it as used
+		}
+		printStart(next)
+		requester := HttpRequester.HttpRequester{
+			URL:       next,
+			UserAgent: "Url Scraper AC",
+			Timeout:   30,
+		}
+
+		/*Actual Check*/
+		document := requester.MakeCheck()
+
+		/*Get Link from response document*/
+		dom := DomManager.DomManager{
+			Document: document,
+		}
+		urls := dom.GetURLFromDocument()
+		extMap, intMap := LinkManager.DivideURLByType(urls, LinkManager.GetDomainFromUrl(next))
+		/*Convert Link From Map To Slice (Array)*/
+		external := mapToSlice(extMap)
+		internal := mapToSlice(intMap)
+		_ = internal //Remove Declared but not used error
+
+		/*Get a cleaned map of URL*/
+		dbManager.RegisterURLToMysql(LinkManager.GetCleanedURLMap(extMap))
+
+		/*Save to redis and save in Queue*/
+		dbManager.RegisterURLToRedis(external)
+		dbManager.RegisterURLToQueue(external)
+
+		/*Get Url For Next Request*/
+		if dbManager.GetQueueSize() > 1 {
+			next = dbManager.GetNextURLFromQueue(next)
+		} else {
+			cond = false
+			log.Fatal("No More URL")
+		}
+
+		/*Wait 4 seconds before next request*/
+		printComplete()
+		time.Sleep(4 * time.Second)
+	}
+}
+
+func printStart(url string) {
+	fmt.Println("Request Started For: ", url)
+}
+func printComplete() {
+	fmt.Println("Complete.... Waiting 4 seconds for next one.")
+}
+
+func loadEnv() {
+	checkErr(godotenv.Load())
+}
+
+func getRedisClient() *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+}
+func getMysqlClient() *sql.DB {
 	db, err := sql.Open("mysql", "scraper:root@/scraper")
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = db.Ping()
-	if err != nil {
-		log.Fatal(err)
-	}
-	redis := RedisClient.CreateNewClient()
+	checkErr(err)
+	checkErr(db.Ping())
+	return db
+}
+func getQueueClient() mq.Queue {
 	settings := &config.Settings{
 		Token:     os.Getenv("IRON_TOKEN"),
 		ProjectId: os.Getenv("IRON_PROJECT_ID"),
@@ -36,94 +109,19 @@ func main() {
 		Scheme:    os.Getenv("IRON_SCHEME"),
 		Port:      8080,
 	}
-	queue := mq.ConfigNew("scraper", settings)
-	// queue.Clear()
-	// redis.FlushDB()
-
-	var next string = "https://www.reddit.com/r/EpicSeven/comments/adbngw/compilation_of_useful_links/"
-	var cond bool = true
-	for cond {
-		info, _ := queue.Info()
-		log.Println("Waiting: ", info.Size)
-		req := Requester.Requester{
-			StartUrl: next,
-		}
-		//Make Request and Get Links
-		external, internal := req.Check()
-		print(req)
-		registerToRedis(external, redis)        //One
-		registerToQueue(external, redis, queue) //Two
-		registerToMysql(external, db)           //Three
-
-		next = getNext(req.StartUrl, redis, queue)
-		if next == "" {
-			if len(internal) > 1 {
-				next = internal[0]
-			} else {
-				cond = false
-			}
-		}
-		time.Sleep(4 * time.Second)
-	}
+	return mq.ConfigNew("scraper", settings)
 }
 
-func registerToRedis(external []string, client *redis.Client) {
-	for _, element := range external {
-		err := client.SetNX(element, "0", 0).Err()
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-}
-
-func registerToQueue(external []string, client *redis.Client, queue mq.Queue) {
-	for _, element := range external {
-		val, err := client.Get(element).Result()
-		if err != nil {
-			panic(err)
-		} else if err == redis.Nil {
-			continue
-		}
-		if val == "0" {
-			_, err := queue.PushMessage(mq.Message{Delay: 0, Body: element})
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
-	return
-}
-
-func registerToMysql(external []string, db *sql.DB) {
-	stmtIns, err := db.Prepare("INSERT IGNORE INTO sites (url) VALUES( ? )")
-	if err != nil {
-		panic(err.Error())
-	}
-	defer stmtIns.Close()
-
-	for _, element := range external {
-		_, err = stmtIns.Exec(element)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-
-}
-
-func getNext(current string, client *redis.Client, queue mq.Queue) string {
-	err := client.Set(current, "1", 0).Err()
+func checkErr(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	message, _ := queue.Pop()
-	if message.Body == "" {
-		return ""
-	}
-	return message.Body
 }
 
-func print(req Requester.Requester) {
-	//Print Data for dev env
-	fmt.Println("Request: ", req.StartUrl)
-	fmt.Println("Next request")
+func mapToSlice(m map[string]int) []string {
+	var slice []string
+	for k := range m {
+		slice = append(slice, k)
+	}
+	return slice
 }
