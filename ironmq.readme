@@ -1,8 +1,9 @@
 https://dev.iron.io/mq/3/on-premise/installation/single.html
 
+# Create an auth token for IronMQ
 
 ```shell
-    docker run --net=host iron/authcli iron -t adminToken create user alessandromarinoac@gmail.com scraper
+    docker run --net=host iron/authcli iron -t adminToken create user $EMAIL scraper
 ```
 
 ```shell
