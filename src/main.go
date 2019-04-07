@@ -14,12 +14,13 @@ import (
 	"github.com/joho/godotenv"
 	"log"
 	"os"
+	"strconv"
 	"time"
 )
 
 func main() {
 	loadEnv()
-	next := "https://www.reddit.com/r/EpicSeven/comments/adbngw/compilation_of_useful_links/"
+	next := os.Getenv("START_URL")
 	var dbManager = DbManager.DbManager{
 		RedisClient: getRedisClient(),
 		MySqlClient: getMysqlClient(),
@@ -29,6 +30,9 @@ func main() {
 	// getRedisClient().FlushDB()
 
 	cond := true
+	app, err := strconv.ParseInt(os.Getenv("WAITING_TIME"), 10, 64)
+	wait := time.Duration(app)
+	checkErr(err)
 	for cond {
 		/*Preparation*/
 		log.Println("Current Queue: ", dbManager.GetQueueSize())
@@ -73,7 +77,7 @@ func main() {
 
 		/*Wait 4 seconds before next request*/
 		printComplete()
-		time.Sleep(4 * time.Second)
+		time.Sleep(wait * time.Second)
 	}
 }
 
@@ -81,7 +85,7 @@ func printStart(url string) {
 	fmt.Println("Request Started For: ", url)
 }
 func printComplete() {
-	fmt.Println("Complete.... Waiting 4 seconds for next one.")
+	fmt.Printf("Complete.... Waiting %s seconds for next one.\n", os.Getenv("WAITING_TIME"))
 }
 
 func loadEnv() {
