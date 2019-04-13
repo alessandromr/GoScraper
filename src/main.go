@@ -15,6 +15,7 @@ import (
 	"github.com/joho/godotenv"
 	"log"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -116,7 +117,7 @@ func main() {
 
 		/*Wait 4 seconds before next request*/
 		printComplete()
-		time.Sleep(4 * time.Second)
+		time.Sleep(wait * time.Second)
 	}
 
 }
