@@ -1,4 +1,4 @@
-package URLsQueue
+package MemQueue
 
 import ()
 

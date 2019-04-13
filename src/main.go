@@ -1,31 +1,26 @@
 package main
 
 import (
-	"./pkg/DbManager"
+	"./pkg/DataManager"
 	"./pkg/DomManager"
 	"./pkg/HttpRequester"
 	"./pkg/LinkManager"
-	"./pkg/URLsQueue"
-	"database/sql"
-	"fmt"
-	"github.com/go-redis/redis"
+	"./pkg/MemQueue"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/iron-io/iron_go3/config"
-	"github.com/iron-io/iron_go3/mq"
-	"github.com/joho/godotenv"
 	"log"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
 func main() {
 	loadEnv()
-	next := os.Getenv("START_URL")
-	var recent = URLsQueue.Queue{Qlen: 80} //Must be below 100
+	var next string
+	var recent = MemQueue.Queue{Qlen: 80} //Must be below 100
 
-	//Prepare tge dbManager clients
-	var dbManager = DbManager.DbManager{
+	//Prepare the Database clients
+	var dbManager = DataManager.DataManager{
 		RedisClient: getRedisClient(),
 		MySqlClient: getMysqlClient(),
 		QueueClient: getQueueClient(),
@@ -33,87 +28,46 @@ func main() {
 	// getQueueClient().Clear()
 	// getRedisClient().FlushDB()
 
-	cond := true
-	app, err := strconv.ParseInt(os.Getenv("WAITING_TIME"), 10, 64)
-	checkErr(err)
-	wait := time.Duration(app)
-	if dbManager.GetQueueSize() > 1 {
-		next = dbManager.GetNextURLFromQueue(next, recent) //Right Now "next" is the current url and we pass it to GetNext to mark it as used
-	}
+	wait := getWaitTime()
+
 	go func() {
 		for {
 			log.Println("Current Queue: ", dbManager.GetQueueSize())
 			log.Println("Recent Queue: ", len(recent.URLs))
-			time.Sleep(time.Second * 15)
+			time.Sleep(time.Second * 20)
 		}
 	}()
-	for cond {
-		/*Preparation*/
+	for {
+		/*Get Url For Next Request*/
+		if next == "" {
+			next = os.Getenv("START_URL")
+		} else if dbManager.GetQueueSize() > 1 {
+			next = dbManager.GetNextURLFromQueue(next, recent)
+		} else {
+			log.Println("NO MORE URL")
+			break
+		}
 		printStart(next)
+
+		/*Prepare request*/
 		requester := HttpRequester.HttpRequester{
 			URL:       next,
 			UserAgent: "Url Scraper AC",
-			Timeout:   30,
+			Timeout:   4,
 		}
 		/*Actual Check*/
 		document, err := requester.MakeCheck()
-
-		//If request has problem remove URL from Mysql
-		if err != nil {
-			log.Println("This URL has something wrong, better skip")
-			//Remove URL from MySQL
-			go func() {
-				dbManager.RemoveFromMysql(LinkManager.GetCleanUrl(next))
-			}()
-
-			/*Get Url For Next Request*/
-			if dbManager.GetQueueSize() > 1 {
-				next = dbManager.GetNextURLFromQueue(next, recent)
-			} else {
-				cond = false
-				log.Fatal("No More URL")
-			}
-			/*Add done URL to last URL Memory Queue*/
-			recent.URLs = recent.Push(URLsQueue.Url{
-				Domain: LinkManager.GetDomainFromUrl(next),
-				Clean:  LinkManager.GetCleanUrl(next),
-			})
-			continue
+		if checkRequestError(err, dbManager, next, recent) {
+			break
 		}
+
 		/*Get Link from response document*/
 		dom := DomManager.DomManager{
 			Document: document,
 		}
 		urls := dom.GetURLFromDocument()
 		extMap, intMap := LinkManager.DivideURLByType(urls, LinkManager.GetDomainFromUrl(next))
-
-		/*Convert Link From Map To Slice (Array)*/
-		external := mapToSlice(extMap)
-		internal := mapToSlice(intMap)
-		_ = internal //Remove Declared but not used error
-
-		/*Get a cleaned map of URL*/
-		go func() {
-			dbManager.RegisterURLToMysql(LinkManager.GetCleanedURLMap(extMap))
-		}()
-
-		/*Save to redis and save in Queue*/
-		dbManager.RegisterURLToRedis(external)
-		dbManager.RegisterURLToQueue(external)
-
-		/*Add done URL to last URL Memory Queue*/
-		recent.URLs = recent.Push(URLsQueue.Url{
-			Domain: LinkManager.GetDomainFromUrl(next),
-			Clean:  LinkManager.GetCleanUrl(next),
-		})
-
-		/*Get Url For Next Request*/
-		if dbManager.GetQueueSize() > 1 {
-			next = dbManager.GetNextURLFromQueue(next, recent)
-		} else {
-			cond = false
-			log.Fatal("No More URL")
-		}
+		storeResponse(next, extMap, intMap, dbManager, recent)
 
 		/*Wait 4 seconds before next request*/
 		printComplete()
@@ -122,53 +76,71 @@ func main() {
 
 }
 
-func printStart(url string) {
-	fmt.Println("Request Started For: ", url)
-}
-func printComplete() {
-	fmt.Printf("Complete.... Waiting %s seconds for next one.\n", os.Getenv("WAITING_TIME"))
-	fmt.Println("-------------------------------------------")
-	fmt.Println("")
-}
-
-func loadEnv() {
-	checkErr(godotenv.Load())
-}
-
-func getRedisClient() *redis.Client {
-	return redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "", // no password set
-		DB:       0,  // use default DB
-	})
-}
-func getMysqlClient() *sql.DB {
-	db, err := sql.Open("mysql", "scraper:root@/scraper")
+func getWaitTime() time.Duration {
+	wTime, err := strconv.ParseInt(os.Getenv("WAITING_TIME"), 10, 64)
 	checkErr(err)
-	checkErr(db.Ping())
-	return db
-}
-func getQueueClient() mq.Queue {
-	settings := &config.Settings{
-		Token:     os.Getenv("IRON_TOKEN"),
-		ProjectId: os.Getenv("IRON_PROJECT_ID"),
-		Host:      os.Getenv("IRON_HOST"),
-		Scheme:    os.Getenv("IRON_SCHEME"),
-		Port:      8080,
-	}
-	return mq.ConfigNew("scraper", settings)
+	return time.Duration(wTime)
 }
 
-func checkErr(err error) {
+func checkRequestError(err error, dbManager DataManager.DataManager, next string, recent MemQueue.Queue) bool {
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("\nThis URL has something wrong, better skip\n")
+		go func() {
+			dbManager.RemoveFromMysql(LinkManager.GetCleanUrl(next))
+		}()
+
+		/*Add done URL to last URL Memory Queue*/
+		recent.URLs = recent.Push(MemQueue.Url{
+			Domain: LinkManager.GetDomainFromUrl(next),
+			Clean:  LinkManager.GetCleanUrl(next),
+		})
+		return true
 	}
+	return false
 }
 
-func mapToSlice(m map[string]int) []string {
-	var slice []string
-	for k := range m {
-		slice = append(slice, k)
-	}
-	return slice
+func storeResponse(current string, extMap map[string]int, intMap map[string]int, dbManager DataManager.DataManager, recent MemQueue.Queue) {
+	var wg sync.WaitGroup
+
+	/*Convert Link From Map To Slice (Array)*/
+	var external []string
+	var internal []string
+
+	wg.Add(2)
+	go func() {
+		external = mapToSlice(extMap) //Get a slice from a map
+		wg.Done()
+	}()
+	go func() {
+		internal = mapToSlice(intMap) //Get a slice from a map
+		wg.Done()
+	}()
+	_ = internal //Remove Declared but not used error
+
+	go func() {
+		//Insert DB to mysql
+		dbManager.RegisterURLToMysql(LinkManager.GetCleanedURLMap(extMap))
+	}()
+
+	wg.Wait() //Wait mapToSlice to be completed
+
+	wg.Add(3)
+	go func() {
+		/*Save to redis*/
+		dbManager.RegisterURLToRedis(external)
+		wg.Done()
+	}()
+	go func() {
+		/*Save in Queue*/
+		dbManager.RegisterURLToQueue(external)
+		wg.Done()
+	}()
+	go func() {
+		/*Add done URL to last URL Memory Queue*/
+		recent.URLs = recent.Push(MemQueue.Url{
+			Domain: LinkManager.GetDomainFromUrl(current),
+			Clean:  LinkManager.GetCleanUrl(current),
+		})
+	}()
+	wg.Wait()
 }

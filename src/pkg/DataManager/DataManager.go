@@ -1,21 +1,21 @@
-package DbManager
+package DataManager
 
 import (
 	"../LinkManager"
-	"../URLsQueue"
+	"../MemQueue"
 	"database/sql"
 	"github.com/go-redis/redis"
 	"github.com/iron-io/iron_go3/mq"
 	"log"
 )
 
-type DbManager struct {
+type DataManager struct {
 	RedisClient *redis.Client
 	MySqlClient *sql.DB
 	QueueClient mq.Queue
 }
 
-func (ins DbManager) RegisterURLToMysql(external map[string]int) {
+func (ins DataManager) RegisterURLToMysql(external map[string]int) {
 	stmtIns, err := ins.MySqlClient.Prepare("INSERT IGNORE INTO sites (url) VALUES( ? )")
 	if err != nil {
 		panic(err.Error())
@@ -30,14 +30,14 @@ func (ins DbManager) RegisterURLToMysql(external map[string]int) {
 
 }
 
-func (ins DbManager) RegisterURLToRedis(external []string) {
+func (ins DataManager) RegisterURLToRedis(external []string) {
 	for _, element := range external {
 		err := ins.RedisClient.SetNX(element, "0", 0).Err()
 		checkErr(err)
 	}
 }
 
-func (ins DbManager) RegisterURLToQueue(external []string) {
+func (ins DataManager) RegisterURLToQueue(external []string) {
 	for _, element := range external {
 		val, err := ins.RedisClient.Get(element).Result()
 		if err != nil {
@@ -53,12 +53,12 @@ func (ins DbManager) RegisterURLToQueue(external []string) {
 	return
 }
 
-func (ins DbManager) GetQueueSize() int {
+func (ins DataManager) GetQueueSize() int {
 	info, _ := ins.QueueClient.Info()
 	return info.Size
 }
 
-func (ins DbManager) GetNextURLFromQueue(current string, recents URLsQueue.Queue) string {
+func (ins DataManager) GetNextURLFromQueue(current string, recents MemQueue.Queue) string {
 
 	//Set Last URL as done on REDIS
 	checkErr(ins.RedisClient.Set(current, "1", 0).Err())
@@ -104,7 +104,7 @@ func (ins DbManager) GetNextURLFromQueue(current string, recents URLsQueue.Queue
 	}
 }
 
-func (ins DbManager) RemoveFromMysql(url string) {
+func (ins DataManager) RemoveFromMysql(url string) {
 	stmtIns, err := ins.MySqlClient.Prepare("DELETE FROM sites WHERE url = ?")
 	checkErr(err)
 	defer stmtIns.Close()
@@ -112,7 +112,7 @@ func (ins DbManager) RemoveFromMysql(url string) {
 	checkErr(err)
 }
 
-func (ins DbManager) trimQueue(qty int) {
+func (ins DataManager) trimQueue(qty int) {
 	//Peek last n elements from queue
 	messages, err := ins.QueueClient.PeekN(qty)
 	checkErr(err)
