@@ -18,7 +18,7 @@ type HttpRequester struct {
 * @parameter null
 * @return goquery.document
  */
-func (req HttpRequester) MakeCheck() goquery.Document {
+func (req HttpRequester) MakeCheck() (goquery.Document, error) {
 	client := &http.Client{
 		Timeout: req.Timeout * time.Second,
 	}
@@ -33,14 +33,16 @@ func (req HttpRequester) MakeCheck() goquery.Document {
 	// Make request
 	response, err := client.Do(request)
 	if err != nil {
-		log.Fatal(err)
+		log.Println("Error making HTTP request.", err)
+		return *new(goquery.Document), err
 	}
 	defer response.Body.Close()
 
 	// Create a goquery document from the HTTP response
 	document, err := goquery.NewDocumentFromReader(response.Body)
 	if err != nil {
-		log.Fatal("Error loading HTTP response body. ", err)
+		log.Println("Error loading HTTP response body. ", err)
+		return *new(goquery.Document), err
 	}
-	return *document
+	return *document, err
 }
