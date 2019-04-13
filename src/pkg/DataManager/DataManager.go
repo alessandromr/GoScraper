@@ -125,6 +125,10 @@ func (ins DataManager) FlushQueueIfTooBig() {
 	}
 }
 
+func (ins DataManager) SetUrlOnRedis(current string) {
+	checkErr(ins.RedisClient.Set(current, "1", 0).Err())
+}
+
 func (ins DataManager) trimQueue(qty int) {
 	//Peek last n elements from queue
 	messages, err := ins.QueueClient.PeekN(qty)

@@ -59,6 +59,7 @@ func main() {
 		/*Actual Check*/
 		document, err := requester.MakeCheck()
 		if checkRequestError(err, dbManager, next, recent) {
+			dbManager.SetUrlOnRedis(next)
 			continue
 		}
 
