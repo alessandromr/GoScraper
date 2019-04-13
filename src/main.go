@@ -25,7 +25,7 @@ func main() {
 		MySqlClient: getMysqlClient(),
 		QueueClient: getQueueClient(),
 	}
-	// getQueueClient().Clear()
+	getQueueClient().Clear()
 	// getRedisClient().FlushDB()
 
 	wait := getWaitTime()
@@ -47,6 +47,7 @@ func main() {
 			log.Println("NO MORE URL")
 			break
 		}
+		dbManager.FlushQueueIfTooBig()
 		printStart(next)
 
 		/*Prepare request*/
@@ -58,7 +59,7 @@ func main() {
 		/*Actual Check*/
 		document, err := requester.MakeCheck()
 		if checkRequestError(err, dbManager, next, recent) {
-			break
+			continue
 		}
 
 		/*Get Link from response document*/
@@ -67,7 +68,7 @@ func main() {
 		}
 		urls := dom.GetURLFromDocument()
 		extMap, intMap := LinkManager.DivideURLByType(urls, LinkManager.GetDomainFromUrl(next))
-		storeResponse(next, extMap, intMap, dbManager, recent)
+		storeResponse(next, extMap, intMap, dbManager, &recent)
 
 		/*Wait 4 seconds before next request*/
 		printComplete()
@@ -99,7 +100,7 @@ func checkRequestError(err error, dbManager DataManager.DataManager, next string
 	return false
 }
 
-func storeResponse(current string, extMap map[string]int, intMap map[string]int, dbManager DataManager.DataManager, recent MemQueue.Queue) {
+func storeResponse(current string, extMap map[string]int, intMap map[string]int, dbManager DataManager.DataManager, recent *MemQueue.Queue) {
 	var wg sync.WaitGroup
 
 	/*Convert Link From Map To Slice (Array)*/
@@ -141,6 +142,7 @@ func storeResponse(current string, extMap map[string]int, intMap map[string]int,
 			Domain: LinkManager.GetDomainFromUrl(current),
 			Clean:  LinkManager.GetCleanUrl(current),
 		})
+		wg.Done()
 	}()
 	wg.Wait()
 }

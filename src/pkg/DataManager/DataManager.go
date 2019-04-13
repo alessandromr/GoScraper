@@ -40,12 +40,12 @@ func (ins DataManager) RegisterURLToRedis(external []string) {
 func (ins DataManager) RegisterURLToQueue(external []string) {
 	for _, element := range external {
 		val, err := ins.RedisClient.Get(element).Result()
-		if err != nil {
-			panic(err)
-		} else if err == redis.Nil {
+		if err == redis.Nil {
 			continue
 		}
-		if val == "0" {
+		if err != nil {
+			panic(err)
+		} else if val == "0" {
 			_, err := ins.QueueClient.PushMessage(mq.Message{Delay: 0, Body: element})
 			checkErr(err)
 		}
@@ -110,6 +110,19 @@ func (ins DataManager) RemoveFromMysql(url string) {
 	defer stmtIns.Close()
 	_, err = stmtIns.Exec(url)
 	checkErr(err)
+}
+
+func (ins DataManager) FlushQueueIfTooBig() {
+	if ins.GetQueueSize() > 1500 {
+		messages, err := ins.QueueClient.PeekN(3)
+		checkErr(err)
+		ins.QueueClient.Clear()
+		for _, element := range messages {
+			_, err := ins.QueueClient.PushMessage(mq.Message{Delay: 0, Body: element.Body})
+			checkErr(err)
+		}
+		log.Println("Flushed Queue")
+	}
 }
 
 func (ins DataManager) trimQueue(qty int) {
